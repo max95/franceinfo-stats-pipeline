@@ -17,9 +17,14 @@ create table if not exists articles (
   published_at timestamptz,
   topic text,
   raw jsonb,
-  inserted_at timestamptz default now(),
-  unique(source_id, coalesce(guid, link))
+  inserted_at timestamptz default now()
 );
+
+create unique index if not exists idx_articles_source_guid
+  on articles(source_id, guid)
+  where guid is not null;
+create unique index if not exists idx_articles_source_link
+  on articles(source_id, link);
 
 -- Déduplication logique multi-sources
 create table if not exists article_dupes (

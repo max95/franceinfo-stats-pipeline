@@ -14,9 +14,13 @@ create table if not exists articles (
   published_at text,
   topic text,
   raw text,
-  inserted_at text default (datetime('now')),
-  unique(source_id, COALESCE(guid, link))
+  inserted_at text default (datetime('now'))
 );
+create unique index if not exists idx_articles_source_guid
+  on articles(source_id, guid)
+  where guid is not null;
+create unique index if not exists idx_articles_source_link
+  on articles(source_id, link);
 create table if not exists article_dupes (
   id integer primary key autoincrement,
   article_id int,
