@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import pandas as pd
-from datetime import date
-from sqlalchemy import text
-from db import get_engine
+from datetime import date, timedelta
+
 import gradio as gr
+import pandas as pd
+import plotly.express as px
+from sqlalchemy import text
+
+from db import get_engine
 
 DAY = date.today().isoformat()
 
@@ -26,27 +29,103 @@ where date(coalesce(a.published_at, a.inserted_at)) = :d
 order by coalesce(a.published_at, a.inserted_at) desc
 limit 200
 """
+SQL_TOPIC_TRENDS = """
+select date(coalesce(a.published_at, a.inserted_at)) as day,
+       s.name as source,
+       coalesce(a.topic,'general') as topic,
+       count(*) as articles
+from articles a
+join sources s on s.id = a.source_id
+where date(coalesce(a.published_at, a.inserted_at)) between :start_day and :end_day
+  and a.id not in (select article_id from article_dupes)
+group by day, source, topic
+order by day asc, source asc, topic asc
+"""
+
+
+def _build_topic_trend_visuals(
+    trends: pd.DataFrame,
+    selected_sources: list[str] | None,
+    selected_topics: list[str] | None,
+):
+    df = trends.copy()
+    selected_sources = selected_sources or []
+    selected_topics = selected_topics or []
+    if selected_sources:
+        df = df[df["source"].isin(selected_sources)]
+    if selected_topics:
+        df = df[df["topic"].isin(selected_topics)]
+    df = df.sort_values(["day", "source", "topic"])
+    if df.empty:
+        return None, df
+
+    df_plot = df.copy()
+    df_plot["day"] = pd.to_datetime(df_plot["day"]).dt.strftime("%Y-%m-%d")
+    facet_args: dict[str, str] = {}
+    if df_plot["source"].nunique() > 1:
+        facet_args["facet_row"] = "source"
+
+    fig = px.bar(
+        df_plot,
+        x="day",
+        y="articles",
+        color="topic",
+        barmode="stack",
+        category_orders={"day": sorted(df_plot["day"].unique())},
+        **facet_args,
+    )
+    fig.update_layout(
+        title="Répartition des thèmes par source (30 derniers jours)",
+        xaxis_title="Jour",
+        yaxis_title="Nombre d'articles",
+        legend_title_text="Thème",
+        bargap=0.05,
+    )
+    fig.update_xaxes(type="category", tickangle=45)
+    return fig, df.reset_index(drop=True)
 
 
 def load_data(day: str):
     eng = get_engine()
+    start_day = (date.fromisoformat(day) - timedelta(days=29)).isoformat()
     with eng.begin() as cxn:
         sumrow = cxn.execute(text(SQL_SUMMARY), {"d": day}).mappings().first()
         topicrows = cxn.execute(text(SQL_TOPICS), {"d": day}).mappings().all()
         stats = cxn.execute(text(SQL_STATS), {"d": day}).mappings().first()
         feed = pd.read_sql_query(text(SQL_FEED), cxn, params={"d": day})
+        topic_trends = pd.read_sql_query(
+            text(SQL_TOPIC_TRENDS),
+            cxn,
+            params={"start_day": start_day, "end_day": day},
+        )
     summary_md = sumrow["summary_md"] if sumrow else "*(Pas de résumé pour ce jour)*"
     topics_md = "\n\n".join([f"### {r['topic'].title()}\n\n" + r['summary_md'] for r in topicrows]) or ""
-    return summary_md, topics_md, stats, feed
+    sources = sorted(topic_trends["source"].unique().tolist()) if not topic_trends.empty else []
+    topics = sorted(topic_trends["topic"].unique().tolist()) if not topic_trends.empty else []
+    return summary_md, topics_md, stats, feed, topic_trends, sources, topics
 
 
-def ui_refresh(day):
-    sm, tm, st, feed = load_data(day)
-    stats_md = f"**Articles**: {st['articles']} | **Doublons**: {st['dupes']} | **Transcripts**: {st['transcripts']} | **Crosslinks**: {st['crosslinks']}"
-    return sm, tm, stats_md, feed
+def ui_refresh(day, selected_sources, selected_topics):
+    (
+        sm,
+        tm,
+        stats,
+        feed,
+        topic_trends,
+        sources,
+        topics,
+    ) = load_data(day)
+    stats_md = (
+        f"**Articles**: {stats['articles']} | **Doublons**: {stats['dupes']} | "
+        f"**Transcripts**: {stats['transcripts']} | **Crosslinks**: {stats['crosslinks']}"
+    )
+    fig, table = _build_topic_trend_visuals(topic_trends, selected_sources, selected_topics)
+    return sm, tm, stats_md, feed, topic_trends, fig, table, sources, topics
+
 
 with gr.Blocks(title="France Info — RSS x Transcripts", theme=gr.themes.Soft()) as demo:
     day = gr.State(DAY)
+    topic_trends_state = gr.State()
 
     gr.Markdown("# France Info — RSS × Transcripts (Jour)")
     stats_box = gr.Markdown()
@@ -54,21 +133,98 @@ with gr.Blocks(title="France Info — RSS x Transcripts", theme=gr.themes.Soft()
     topics_box = gr.Markdown()
     feed_tbl = gr.Dataframe(interactive=False)
 
+    gr.Markdown("## Thèmes & sujets par source")
+    with gr.Row():
+        source_filter = gr.Dropdown(label="Sources", multiselect=True)
+        topic_filter = gr.Dropdown(label="Thèmes", multiselect=True)
+    trends_plot = gr.Plot()
+    trends_table = gr.Dataframe(interactive=False)
+
     def _init():
-        sm, tm, st, feed = load_data(day.value)
-        stats_box.value = f"**Articles**: {st['articles']} | **Doublons**: {st['dupes']} | **Transcripts**: {st['transcripts']} | **Crosslinks**: {st['crosslinks']}"
+        (
+            sm,
+            tm,
+            stats_md,
+            feed,
+            topic_trends,
+            sources,
+            topics,
+        ) = ui_refresh(day.value, None, None)
+        stats_box.value = stats_md
         daily_box.value = sm
         topics_box.value = tm
         feed_tbl.value = feed
+        topic_trends_state.value = topic_trends
+        source_filter.choices = sources
+        topic_filter.choices = topics
+        source_filter.value = None
+        topic_filter.value = None
+        fig, table = _build_topic_trend_visuals(topic_trends, None, None)
+        trends_plot.value = fig
+        trends_table.value = table
 
     demo.load(_init)
 
-    def _tick():
-        sm, tm, st, feed = ui_refresh(day.value)
-        return sm, tm, st, feed
+    def _tick(current_day, selected_sources, selected_topics):
+        (
+            sm,
+            tm,
+            stats_md,
+            feed,
+            topic_trends,
+            fig,
+            table,
+            sources,
+            topics,
+        ) = ui_refresh(current_day, selected_sources, selected_topics)
+        selected_sources = selected_sources or []
+        selected_topics = selected_topics or []
+        selected_sources = [s for s in selected_sources if s in sources]
+        selected_topics = [t for t in selected_topics if t in topics]
+        topic_trends_state_value = topic_trends
+        return (
+            sm,
+            tm,
+            stats_md,
+            feed,
+            topic_trends_state_value,
+            fig,
+            table,
+            gr.update(choices=sources, value=selected_sources or None),
+            gr.update(choices=topics, value=selected_topics or None),
+        )
 
     timer = gr.Timer(10.0, True)
-    timer.tick(fn=_tick, outputs=[daily_box, topics_box, stats_box, feed_tbl])
+    timer.tick(
+        fn=_tick,
+        inputs=[day, source_filter, topic_filter],
+        outputs=[
+            daily_box,
+            topics_box,
+            stats_box,
+            feed_tbl,
+            topic_trends_state,
+            trends_plot,
+            trends_table,
+            source_filter,
+            topic_filter,
+        ],
+    )
+
+    def _on_filter_change(selected_sources, selected_topics, topic_trends):
+        fig, table = _build_topic_trend_visuals(topic_trends, selected_sources, selected_topics)
+        return fig, table
+
+    source_filter.change(
+        fn=_on_filter_change,
+        inputs=[source_filter, topic_filter, topic_trends_state],
+        outputs=[trends_plot, trends_table],
+    )
+    topic_filter.change(
+        fn=_on_filter_change,
+        inputs=[source_filter, topic_filter, topic_trends_state],
+        outputs=[trends_plot, trends_table],
+    )
 
 if __name__ == "__main__":
     demo.launch()
