@@ -34,7 +34,7 @@ def load_data(day: str):
         sumrow = cxn.execute(text(SQL_SUMMARY), {"d": day}).mappings().first()
         topicrows = cxn.execute(text(SQL_TOPICS), {"d": day}).mappings().all()
         stats = cxn.execute(text(SQL_STATS), {"d": day}).mappings().first()
-        feed = pd.read_sql_query(text(SQL_FEED), cxn.connection, params={"d": day})
+        feed = pd.read_sql_query(text(SQL_FEED), cxn, params={"d": day})
     summary_md = sumrow["summary_md"] if sumrow else "*(Pas de résumé pour ce jour)*"
     topics_md = "\n\n".join([f"### {r['topic'].title()}\n\n" + r['summary_md'] for r in topicrows]) or ""
     return summary_md, topics_md, stats, feed
