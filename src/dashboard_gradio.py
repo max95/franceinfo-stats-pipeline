@@ -67,6 +67,9 @@ def _build_topic_trend_visuals(
 
     df_plot = df.copy()
     df_plot["day"] = pd.to_datetime(df_plot["day"]).dt.strftime("%Y-%m-%d")
+    if "share_pct" not in df_plot:
+        df_plot["share_pct"] = df_plot["share"] * 100
+    df_plot["share_pct"] = df_plot["share_pct"].round(2)
     facet_args: dict[str, str] = {}
     if df_plot["source"].nunique() > 1:
         facet_args["facet_row"] = "source"
@@ -74,21 +77,30 @@ def _build_topic_trend_visuals(
     fig = px.bar(
         df_plot,
         x="day",
-        y="articles",
+        y="share_pct",
         color="topic",
         barmode="stack",
         category_orders={"day": sorted(df_plot["day"].unique())},
+        hover_data={"share_pct": True, "articles": True},
+        labels={"share_pct": "Part (%)", "articles": "Articles", "day": "Jour"},
         **facet_args,
     )
     fig.update_layout(
         title="Répartition des thèmes par source (30 derniers jours)",
         xaxis_title="Jour",
-        yaxis_title="Nombre d'articles",
+        yaxis_title="Part des articles (%)",
         legend_title_text="Thème",
         bargap=0.05,
     )
+    fig.update_yaxes(range=[0, 100])
     fig.update_xaxes(type="category", tickangle=45)
-    return fig, df.reset_index(drop=True)
+    df_table = df.copy()
+    if "share" in df_table:
+        df_table = df_table.drop(columns=["share"])
+    if "share_pct" in df_table:
+        df_table = df_table.rename(columns={"share_pct": "part_pct"})
+        df_table["part_pct"] = df_table["part_pct"].round(2)
+    return fig, df_table.reset_index(drop=True)
 
 
 def load_data(day: str):
@@ -103,6 +115,16 @@ def load_data(day: str):
             text(SQL_TOPIC_TRENDS),
             cxn,
             params={"start_day": start_day, "end_day": day},
+        )
+    if not topic_trends.empty:
+        totals = topic_trends.groupby(["day", "source"])["articles"].transform("sum")
+        topic_trends["share"] = topic_trends["articles"] / totals
+        topic_trends["share_pct"] = (topic_trends["share"] * 100).round(2)
+        topic_trends = topic_trends.sort_values(["day", "source", "topic"])
+    else:
+        topic_trends = topic_trends.assign(
+            share=pd.Series(dtype="float64"),
+            share_pct=pd.Series(dtype="float64"),
         )
     summary_md = sumrow["summary_md"] if sumrow else "*(Pas de résumé pour ce jour)*"
     topics_md = "\n\n".join([f"### {r['topic'].title()}\n\n" + r['summary_md'] for r in topicrows]) or ""
