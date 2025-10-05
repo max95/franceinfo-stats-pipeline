@@ -17,12 +17,12 @@ db: install
 
 # Ingestion RSS
 ingest: install
-        . .venv/bin/activate && python src/ingest_rss.py
+	. .venv/bin/activate && python src/ingest_rss.py
 
 SINCE ?=
 
 classify: install
-        . .venv/bin/activate && python src/classify_articles.py $(if $(SINCE),--since=$(SINCE),)
+	. .venv/bin/activate && python src/classify_articles.py $(if $(SINCE),--since=$(SINCE),)
 
 # Déduplication
 dedupe: install
