@@ -1,5 +1,9 @@
 import json
 import logging
+import ssl
+import urllib.request
+from urllib.error import URLError
+
 import yaml
 import feedparser
 from datetime import datetime
@@ -27,13 +31,40 @@ def upsert_sources():
             ), s)
 
 
+def _parse_feed(url: str, source_name: str):
+    """Parse a feed while retrying with relaxed SSL verification if needed."""
+    feed = feedparser.parse(url)
+
+    bozo_exc = getattr(feed, "bozo_exception", None)
+    if getattr(feed, "bozo", False) and bozo_exc:
+        if isinstance(bozo_exc, ssl.SSLError):
+            ssl_err = bozo_exc
+        elif isinstance(bozo_exc, URLError) and isinstance(getattr(bozo_exc, "reason", None), ssl.SSLError):
+            ssl_err = bozo_exc.reason
+        else:
+            ssl_err = None
+
+        if ssl_err is not None:
+            LOG.warning(
+                "Flux %s renvoyé avec une erreur SSL (%s); nouvel essai sans vérification",
+                source_name,
+                ssl_err,
+            )
+            insecure_context = ssl.create_default_context()
+            insecure_context.check_hostname = False
+            insecure_context.verify_mode = ssl.CERT_NONE
+            feed = feedparser.parse(url, handlers=[urllib.request.HTTPSHandler(context=insecure_context)])
+
+    return feed
+
+
 def ingest():
     engine = get_engine()
     with engine.begin() as cxn:
         for s in CFG["sources"]:
             LOG.info("Fetching feed %s", s["name"])
             try:
-                feed = feedparser.parse(s["url"])  # pas de requêtes externes lourdes
+                feed = _parse_feed(s["url"], s["name"])  # pas de requêtes externes lourdes
             except Exception as exc:
                 LOG.exception("Impossible de parser le flux %s (%s)", s["name"], s["url"])
                 continue
