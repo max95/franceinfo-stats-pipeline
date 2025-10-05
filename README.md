@@ -14,6 +14,22 @@ Chaque bloc inclut **scripts prêts à l’emploi**, **prompts** et **commandes*
 
 ---
 
+## Analyse descriptive
+
+Pour produire des statistiques descriptives (volume d’articles, poids des thèmes, durée moyenne d’un sujet), exécute :
+
+```
+python -m src.descriptive_stats --start-date 2024-01-01 --end-date 2024-01-31
+```
+
+Les bornes de dates sont optionnelles. La sortie affiche :
+
+- le nombre d’articles par jour, source et thème ;
+- le poids relatif de chaque thème ;
+- la durée moyenne de « vie médiatique » par thème ainsi que la moyenne générale.
+
+---
+
 ## 0) Arborescence & prérequis
 
 ```
