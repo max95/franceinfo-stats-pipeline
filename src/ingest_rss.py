@@ -7,8 +7,12 @@ from datetime import datetime, timezone
 import hashlib
 import yaml
 import feedparser
+import requests
+from bs4 import BeautifulSoup
 from sqlalchemy import text
 from dotenv import load_dotenv
+
+from db import get_engine
 
 # SSL CA
 try:
@@ -26,6 +30,7 @@ CFG = yaml.safe_load(open("config/rss_sources.yml", "r", encoding="utf-8"))
 
 UA = "franceinfo-stats-pipeline/1.0 (+https://github.com/jeromebouchet)"
 TIMEOUT = 15  # secondes
+ARTICLE_TIMEOUT = 20  # secondes
 
 def _ssl_context():
     ctx = ssl.create_default_context(cafile=CERT_FILE) if CERT_FILE else ssl.create_default_context()
@@ -93,6 +98,61 @@ def _guid(entry) -> str:
         cand = hashlib.sha1(body.encode("utf-8")).hexdigest()
     return str(cand)
 
+
+def _clean_text(text: str | None) -> str | None:
+    if not text:
+        return None
+    lines = [line.strip() for line in text.splitlines()]
+    cleaned = "\n".join(line for line in lines if line)
+    return cleaned or None
+
+
+def _extract_main_text(html: str) -> str | None:
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "form", "aside"]):
+        tag.decompose()
+
+    for tag_name in ("article", "main"):
+        node = soup.find(tag_name)
+        if node:
+            text = _clean_text(node.get_text("\n", strip=True))
+            if text:
+                return text
+
+    best_text = None
+    best_len = 0
+    for node in soup.find_all(["section", "div"]):
+        text = _clean_text(node.get_text("\n", strip=True))
+        if text:
+            length = len(text)
+            if length > best_len:
+                best_text = text
+                best_len = length
+
+    if best_text:
+        return best_text
+
+    return _clean_text(soup.get_text("\n", strip=True))
+
+
+def _fetch_article_content(url: str) -> str | None:
+    try:
+        resp = requests.get(
+            url,
+            headers={"User-Agent": UA, "Accept": "text/html,application/xhtml+xml"},
+            timeout=ARTICLE_TIMEOUT,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        LOG.warning("Article introuvable %s: %s", url, exc)
+        return None
+
+    ctype = resp.headers.get("Content-Type", "")
+    if "html" not in ctype:
+        return None
+
+    return _extract_main_text(resp.text)
+
 def upsert_sources():
     engine = get_engine()
     with engine.begin() as cxn:
@@ -115,32 +175,82 @@ def ingest():
                 # on a déjà loggé le détail
                 continue
 
+            source_id = cxn.execute(
+                text("select id from sources where name = :name"), {"name": s["name"]}
+            ).scalar_one()
+
             for e in feed.entries:
                 dt = _parse_entry_datetime(e)
                 raw = json.dumps({k: e.get(k) for k in e.keys()}, ensure_ascii=False)
 
+                guid = _guid(e) or None
+                link = e.get("link")
+
+                existing = None
+                if guid:
+                    existing = cxn.execute(
+                        text(
+                            "select id, content from articles "
+                            "where source_id = :source_id and guid = :guid"
+                        ),
+                        {"source_id": source_id, "guid": guid},
+                    ).mappings().first()
+                if not existing and link:
+                    existing = cxn.execute(
+                        text(
+                            "select id, content from articles "
+                            "where source_id = :source_id and link = :link"
+                        ),
+                        {"source_id": source_id, "link": link},
+                    ).mappings().first()
+
+                content = None
+                if link and (not existing or existing["content"] is None):
+                    content = _fetch_article_content(link)
+
                 params = {
-                    "guid": _guid(e),
-                    "link": e.get("link"),
+                    "guid": guid,
+                    "link": link,
                     "title": e.get("title"),
                     "summary": e.get("summary"),
+                    "content": content,
                     "published_at": dt,
                     "topic": s.get("topic"),
                     "raw": raw,
-                    "src": s["name"],
+                    "source_id": source_id,
                 }
 
                 try:
-                    cxn.execute(text("""
-                        insert into articles(source_id, guid, link, title, summary, published_at, topic, raw)
-                        select id, :guid, :link, :title, :summary, :published_at, :topic, :raw
-                        from sources where name = :src
-                        on conflict do nothing
-                    """), params)
+                    if existing:
+                        cxn.execute(
+                            text(
+                                """
+                                update articles
+                                set link = :link,
+                                    title = :title,
+                                    summary = :summary,
+                                    published_at = :published_at,
+                                    topic = :topic,
+                                    raw = :raw,
+                                    content = coalesce(:content, content)
+                                where id = :id
+                                """
+                            ),
+                            {**params, "id": existing["id"]},
+                        )
+                    else:
+                        cxn.execute(
+                            text(
+                                """
+                                insert into articles(source_id, guid, link, title, summary, content, published_at, topic, raw)
+                                values(:source_id, :guid, :link, :title, :summary, :content, :published_at, :topic, :raw)
+                                """
+                            ),
+                            params,
+                        )
                 except Exception as exc:
                     LOG.exception("Insertion échouée pour %s (%s): %s", s["name"], e.get("link", ""), exc)
 
 if __name__ == "__main__":
-    from db import get_engine  # import ici pour éviter les imports cycles
     upsert_sources()
     ingest()

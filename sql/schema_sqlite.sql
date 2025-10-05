@@ -11,6 +11,7 @@ create table if not exists articles (
   link text not null,
   title text not null,
   summary text,
+  content text,
   published_at text,
   topic text,
   raw text,
