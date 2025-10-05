@@ -37,7 +37,7 @@ Les bornes de dates sont optionnelles (et les paramètres `--top-themes`, `--cor
 
 ## Analyse sémantique
 
-Pour extraire automatiquement les mots-clés dominants, détecter les expressions émergentes et regrouper les articles similaires, utilise :
+Pour extraire automatiquement les mots-clés dominants, détecter les expressions émergentes et regrouper les articles similaires, assure-toi d'abord d'avoir installé les dépendances (`pip install -r requirements.txt`), puis exécute :
 
 ```
 python -m src.semantic_analysis --start-date 2024-01-01 --end-date 2024-01-31 --period W --clusters 10
@@ -116,6 +116,9 @@ pandas
 tqdm
 gradio>=4.0.0
 requests
+beautifulsoup4
+plotly
+scikit-learn
 ```
 
 **config/rss_sources.yml**

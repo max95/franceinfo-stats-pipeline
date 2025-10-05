@@ -14,11 +14,9 @@ import argparse
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import pandas as pd
-from sklearn.cluster import KMeans
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sqlalchemy import text
 from dotenv import load_dotenv
 
@@ -38,6 +36,43 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s [%(name)s] %(messa
 LOG = logging.getLogger(__name__)
 
 DATE_SQL = "date(coalesce(a.published_at, a.inserted_at))"
+
+
+if TYPE_CHECKING:
+    from sklearn.cluster import KMeans
+    from sklearn.feature_extraction.text import TfidfVectorizer
+
+
+_TFIDF_VECTOR_CLS: type["TfidfVectorizer"] | None = None
+_KMEANS_CLS: type["KMeans"] | None = None
+
+
+def _require_tfidf_vectorizer() -> type["TfidfVectorizer"]:
+    global _TFIDF_VECTOR_CLS
+    if _TFIDF_VECTOR_CLS is None:
+        try:
+            from sklearn.feature_extraction.text import TfidfVectorizer as _Cls
+        except ModuleNotFoundError as exc:  # pragma: no cover - dependency guard
+            raise ModuleNotFoundError(
+                "scikit-learn est requis pour calculer les TF-IDF. "
+                "Installe les dépendances avec `pip install -r requirements.txt`."
+            ) from exc
+        _TFIDF_VECTOR_CLS = _Cls
+    return _TFIDF_VECTOR_CLS
+
+
+def _require_kmeans() -> type["KMeans"]:
+    global _KMEANS_CLS
+    if _KMEANS_CLS is None:
+        try:
+            from sklearn.cluster import KMeans as _Cls
+        except ModuleNotFoundError as exc:  # pragma: no cover - dependency guard
+            raise ModuleNotFoundError(
+                "scikit-learn est requis pour effectuer le clustering K-Means. "
+                "Installe les dépendances avec `pip install -r requirements.txt`."
+            ) from exc
+        _KMEANS_CLS = _Cls
+    return _KMEANS_CLS
 
 
 @dataclass
@@ -110,8 +145,9 @@ def fetch_articles(start_date: str | None, end_date: str | None) -> pd.DataFrame
     return df.dropna(subset=["text"]).assign(text=lambda d: d["text"].str.strip())
 
 
-def _vectorizer(max_features: int | None, *, min_df: int = 2) -> TfidfVectorizer:
-    return TfidfVectorizer(
+def _vectorizer(max_features: int | None, *, min_df: int = 2):
+    vectorizer_cls = _require_tfidf_vectorizer()
+    return vectorizer_cls(
         max_features=max_features,
         ngram_range=(1, 2),
         stop_words="french",
@@ -252,7 +288,8 @@ def cluster_articles(
     if n_clusters == 1:
         labels = [0] * len(df)
     else:
-        model = KMeans(n_clusters=n_clusters, n_init="auto", random_state=random_state)
+        kmeans_cls = _require_kmeans()
+        model = kmeans_cls(n_clusters=n_clusters, n_init="auto", random_state=random_state)
         labels = model.fit_predict(matrix)
 
     df = df.assign(cluster=labels)
@@ -391,7 +428,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> None:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
-    run_cli(args)
+    try:
+        run_cli(args)
+    except ModuleNotFoundError as exc:
+        LOG.error("%s", exc)
+        LOG.error(
+            "Assure-toi d'installer les dépendances avec `pip install -r requirements.txt`."
+        )
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":
