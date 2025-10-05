@@ -8,7 +8,14 @@ import pandas as pd
 from sqlalchemy import text
 from dotenv import load_dotenv
 
-from db import get_engine, init_schema
+if __package__ is None or __package__ == "":
+    import sys
+    from pathlib import Path
+
+    sys.path.append(str(Path(__file__).resolve().parent))
+    from db import get_engine, init_schema  # type: ignore
+else:
+    from .db import get_engine, init_schema
 
 
 load_dotenv()
