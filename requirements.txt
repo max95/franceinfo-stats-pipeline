@@ -1,0 +1,10 @@
+python-dotenv
+SQLAlchemy>=2.0
+psycopg2-binary; platform_system != 'Darwin'
+psycopg2; platform_system == 'Darwin'
+feedparser
+rapidfuzz
+pandas
+tqdm
+gradio>=4.0.0
+requests

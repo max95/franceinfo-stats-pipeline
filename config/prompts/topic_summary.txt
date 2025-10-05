@@ -1,0 +1,1 @@
+Synthétise le thème « {topic} » pour la date {date} en 5 bullets max, en évitant redites et hypothèses. Écris au style dépouillé, neutre, factuel.
