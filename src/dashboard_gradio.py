@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from datetime import date, timedelta
+import os
 
 import gradio as gr
 import pandas as pd
@@ -10,6 +11,33 @@ from sqlalchemy import text
 from db import get_engine
 
 DAY = date.today().isoformat()
+
+DEFAULT_START_DATE = "2024-01-01"
+DEFAULT_END_DATE = "2026-01-31"
+DEFAULT_PERIOD = "W"
+DEFAULT_CLUSTERS = "10"
+
+def _format_dash_config(config: dict[str, str]) -> str:
+    start = config.get("start_date") or "(inconnue)"
+    end = config.get("end_date") or "(inconnue)"
+    period = config.get("period") or "(non défini)"
+    clusters = config.get("clusters") or "(non défini)"
+    return (
+        "### Paramètres de l'analyse\n"
+        f"- **Période étudiée** : {start} → {end}\n"
+        f"- **Granularité temporelle** : {period}\n"
+        f"- **Nombre de clusters sémantiques** : {clusters}"
+    )
+
+
+DASH_CONFIG = {
+    "start_date": os.getenv("DASH_START_DATE", DEFAULT_START_DATE),
+    "end_date": os.getenv("DASH_END_DATE", DEFAULT_END_DATE),
+    "period": os.getenv("DASH_PERIOD", DEFAULT_PERIOD),
+    "clusters": os.getenv("DASH_CLUSTERS", DEFAULT_CLUSTERS),
+}
+
+CONFIG_MD = _format_dash_config(DASH_CONFIG)
 
 SQL_SUMMARY = "select day, summary_md from daily_summaries where day = :d"
 SQL_TOPICS = "select topic, summary_md from topic_summaries where day = :d order by topic"
@@ -156,6 +184,7 @@ with gr.Blocks(title="France Info — RSS x Transcripts", theme=gr.themes.Soft()
     topic_trends_state = gr.State()
 
     gr.Markdown("# France Info — RSS × Transcripts (Jour)")
+    gr.Markdown(CONFIG_MD)
     stats_box = gr.Markdown()
     daily_box = gr.Markdown()
     topics_box = gr.Markdown()
