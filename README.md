@@ -35,6 +35,29 @@ Les bornes de dates sont optionnelles (et les paramètres `--top-themes`, `--cor
 
 ---
 
+## Analyse sémantique
+
+Pour extraire automatiquement les mots-clés dominants, détecter les expressions émergentes et regrouper les articles similaires, utilise :
+
+```
+python -m src.semantic_analysis --start-date 2024-01-01 --end-date 2024-01-31 --period W --clusters 10
+```
+
+Les paramètres principaux :
+
+- `--period` : granularité temporelle (jour `D`, semaine `W`, mois `M`, etc.) ;
+- `--top-keywords` : nombre de mots-clés à conserver par période ;
+- `--min-score` & `--surge-ratio` : seuils pour repérer de nouvelles expressions ou celles en forte hausse ;
+- `--clusters`, `--cluster-top-terms` : configuration du regroupement automatique d’articles (K-Means sur TF-IDF).
+
+La sortie CLI détaille :
+
+- les mots-clés principaux pour chaque période ;
+- les expressions identifiées comme nouvelles ou en forte progression ;
+- la composition des clusters avec leurs termes saillants.
+
+---
+
 ## 0) Arborescence & prérequis
 
 ```
