@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy import text
 from dotenv import load_dotenv
 
-from db import get_engine
+from db import get_engine, init_schema
 
 # SSL CA
 try:
@@ -179,6 +179,7 @@ def _fetch_article_content(url: str) -> str | None:
     return _extract_main_text(resp.text)
 
 def upsert_sources():
+    init_schema()
     engine = get_engine()
     with engine.begin() as cxn:
         for s in CFG["sources"]:
@@ -190,6 +191,7 @@ def upsert_sources():
             """), s)
 
 def ingest():
+    init_schema()
     engine = get_engine()
     with engine.begin() as cxn:
         for s in CFG["sources"]:
@@ -253,7 +255,7 @@ def ingest():
                 if link and (not existing or existing.get("content") is None or existing.get("content_hash") != content_hash):
                     content = _fetch_article_content(link)
 
-                dialect = cxn.connection.dialect.name
+                dialect = cxn.dialect.name
                 published_for_db = dt
                 if dialect == "sqlite" and dt is not None:
                     published_for_db = dt.isoformat()
