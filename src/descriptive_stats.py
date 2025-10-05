@@ -110,6 +110,16 @@ def compute_subject_lifespan(df: pd.DataFrame) -> tuple[pd.DataFrame, float | No
         last_day=("day", "max"),
         theme=("theme", _mode),
     )
+    spans[["first_day", "last_day"]] = spans[["first_day", "last_day"]].apply(
+        pd.to_datetime, errors="coerce"
+    )
+    spans = spans.dropna(subset=["first_day", "last_day"])
+    if spans.empty:
+        return (
+            pd.DataFrame(columns=["theme", "avg_span_days", "median_span_days", "subjects"]),
+            None,
+        )
+
     spans["span_days"] = (spans["last_day"] - spans["first_day"]).dt.days + 1
 
     per_theme = (
