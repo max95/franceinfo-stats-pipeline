@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 from html import unescape
 from typing import Callable, Iterable
 from urllib.parse import urlparse
@@ -166,9 +167,61 @@ class LactualiteClassifier(SourceClassifier):
         return [(tag, 0.85) for tag in unique]
 
 
+class BfmtvClassifier(SourceClassifier):
+    """Parse chapitre/catégorie metadata embedded in BFMTV articles."""
+
+    model_version = "bfmtv_js_metadata_v1"
+    taxonomy_version = "bfmtv_js_metadata_v1"
+
+    _CHAPITRE_RE = re.compile(r"chapitre\d+\s*:\s*\"([^\"]+)\"", re.IGNORECASE)
+    _CATEGORIE_RE = re.compile(r"categorie\d+\s*:\s*\"([^\"]+)\"", re.IGNORECASE)
+
+    def supports(self, article: Article) -> bool:  # type: ignore[override]
+        if article.link:
+            hostname = urlparse(article.link).hostname or ""
+            if "bfmtv.com" in hostname:
+                return True
+        return article.source_name.lower().startswith("bfmtv")
+
+    def classify(  # type: ignore[override]
+        self, article: Article, fetch_html: Callable[[str], str | None]
+    ) -> list[tuple[str, float]]:
+        if not article.link:
+            LOG.debug("Article %s sans lien pour BFMTV", article.id)
+            return []
+
+        html = fetch_html(article.link)
+        if not html:
+            return []
+
+        candidates: list[str] = []
+
+        for regex in (self._CHAPITRE_RE, self._CATEGORIE_RE):
+            for match in regex.findall(html):
+                value = unescape(match).strip()
+                if value and value != "0":
+                    candidates.append(value)
+
+        if not candidates:
+            LOG.debug("Article %s: aucune catégorie trouvée dans le JS BFMTV", article.id)
+            return []
+
+        seen: set[str] = set()
+        unique: list[str] = []
+        for tag in candidates:
+            key = tag.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(tag)
+
+        return [(tag, 0.88) for tag in unique]
+
+
 REGISTRY: tuple[SourceClassifier, ...] = (
     FranceInfoClassifier(),
     LactualiteClassifier(),
+    BfmtvClassifier(),
 )
 
 

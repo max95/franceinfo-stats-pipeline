@@ -456,6 +456,10 @@ Pour L'actualité (`lactualite_general`), le classifieur n'a pas besoin de
 scraper la page : il lit directement les catégories exposées dans le flux RSS
 (`raw`) et les enregistre comme thèmes.
 
+Pour BFMTV, on télécharge la page de l'article puis on extrait les métadonnées
+`chapitreX` / `categorieX` présentes dans le JavaScript embarqué afin d'alimenter
+les thèmes.
+
 ```python
 class FranceInfoClassifier(SourceClassifier):
     model_version = "franceinfo_meta_tags_v1"
