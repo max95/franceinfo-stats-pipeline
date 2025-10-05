@@ -1,0 +1,16 @@
+sources:
+  - name: franceinfo_titres
+    url: https://www.francetvinfo.fr/titres.rss
+    topic: general
+  - name: franceinfo_politique
+    url: https://www.francetvinfo.fr/politique.rss
+    topic: politique
+  - name: franceinfo_monde
+    url: https://www.francetvinfo.fr/monde.rss
+    topic: monde
+  - name: lemonde_une
+    url: https://www.lemonde.fr/rss/une.xml
+    topic: general
+  - name: bfmtv_all
+    url: https://www.bfmtv.com/rss/info/flux-rss/flux-toutes-les-actualites/
+    topic: general
