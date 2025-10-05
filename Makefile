@@ -1,5 +1,5 @@
 
-.PHONY: init install db ingest dedupe summarize align dash all
+.PHONY: init install db ingest dedupe summarize align classify dash all
 
 .venv/.requirements-installed: requirements.txt
 	python -m venv .venv
@@ -19,6 +19,11 @@ db: install
 ingest: install
 	. .venv/bin/activate && python src/ingest_rss.py
 
+SINCE ?=
+
+classify: install
+	. .venv/bin/activate && python src/classify_articles.py $(if $(SINCE),--since=$(SINCE),)
+
 # Déduplication
 dedupe: install
 	. .venv/bin/activate && python src/dedupe.py
@@ -36,4 +41,4 @@ dash: install
 	. .venv/bin/activate && python src/dashboard_gradio.py
 
 # Pipeline complet pour aujourd’hui
-all: ingest dedupe summarize align
+all: ingest classify summarize align

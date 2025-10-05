@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy import text
 from dotenv import load_dotenv
 
-from db import get_engine
+from db import get_engine, init_schema
 
 # SSL CA
 try:
@@ -31,6 +31,31 @@ CFG = yaml.safe_load(open("config/rss_sources.yml", "r", encoding="utf-8"))
 UA = "franceinfo-stats-pipeline/1.0 (+https://github.com/jeromebouchet)"
 TIMEOUT = 15  # secondes
 ARTICLE_TIMEOUT = 20  # secondes
+
+
+def _dt_to_iso(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+    return None
+
+
+def _compute_content_hash(title: str | None, summary: str | None) -> str | None:
+    parts = []
+    if title and title.strip():
+        parts.append(title.strip())
+    if summary and summary.strip():
+        parts.append(summary.strip())
+    if not parts:
+        return None
+    joined = "\n\n".join(parts)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 def _ssl_context():
     ctx = ssl.create_default_context(cafile=CERT_FILE) if CERT_FILE else ssl.create_default_context()
@@ -154,6 +179,7 @@ def _fetch_article_content(url: str) -> str | None:
     return _extract_main_text(resp.text)
 
 def upsert_sources():
+    init_schema()
     engine = get_engine()
     with engine.begin() as cxn:
         for s in CFG["sources"]:
@@ -165,6 +191,7 @@ def upsert_sources():
             """), s)
 
 def ingest():
+    init_schema()
     engine = get_engine()
     with engine.begin() as cxn:
         for s in CFG["sources"]:
@@ -185,39 +212,68 @@ def ingest():
 
                 guid = _guid(e) or None
                 link = e.get("link")
+                summary = e.get("summary") or e.get("description")
+                content_hash = _compute_content_hash(e.get("title"), summary)
+
+                published_iso = _dt_to_iso(dt)
 
                 existing = None
+                candidates: dict[int, dict] = {}
                 if guid:
-                    existing = cxn.execute(
+                    for row in cxn.execute(
                         text(
-                            "select id, content from articles "
-                            "where source_id = :source_id and guid = :guid"
+                            "select id, content, content_hash, published_at "
+                            "from articles where source_id = :source_id and guid = :guid"
                         ),
                         {"source_id": source_id, "guid": guid},
-                    ).mappings().first()
-                if not existing and link:
-                    existing = cxn.execute(
+                    ).mappings():
+                        candidates[row["id"]] = dict(row)
+                if link:
+                    for row in cxn.execute(
                         text(
-                            "select id, content from articles "
-                            "where source_id = :source_id and link = :link"
+                            "select id, content, content_hash, published_at "
+                            "from articles where source_id = :source_id and link = :link"
                         ),
                         {"source_id": source_id, "link": link},
-                    ).mappings().first()
+                    ).mappings():
+                        candidates[row["id"]] = dict(row)
+
+                if candidates:
+                    for cand in candidates.values():
+                        cand_iso = _dt_to_iso(cand.get("published_at"))
+                        if cand_iso == published_iso or (cand_iso is None and published_iso is None):
+                            existing = cand
+                            break
+                    if not existing:
+                        existing = next(iter(candidates.values()))
+
+                if existing and content_hash and existing.get("content_hash") == content_hash:
+                    LOG.debug("Article %s déjà présent (hash identique), skip", link or guid)
+                    continue
 
                 content = None
-                if link and (not existing or existing["content"] is None):
+                if link and (not existing or existing.get("content") is None or existing.get("content_hash") != content_hash):
                     content = _fetch_article_content(link)
+
+                dialect = cxn.dialect.name
+                published_for_db = dt
+                if dialect == "sqlite" and dt is not None:
+                    published_for_db = dt.isoformat()
+                now = datetime.now(timezone.utc)
+                updated_at = now if dialect != "sqlite" else now.isoformat()
 
                 params = {
                     "guid": guid,
                     "link": link,
                     "title": e.get("title"),
-                    "summary": e.get("summary"),
+                    "summary": summary,
                     "content": content,
-                    "published_at": dt,
+                    "published_at": published_for_db,
                     "topic": s.get("topic"),
                     "raw": raw,
                     "source_id": source_id,
+                    "content_hash": content_hash,
+                    "updated_at": updated_at,
                 }
 
                 try:
@@ -232,7 +288,9 @@ def ingest():
                                     published_at = :published_at,
                                     topic = :topic,
                                     raw = :raw,
-                                    content = coalesce(:content, content)
+                                    content = coalesce(:content, content),
+                                    content_hash = :content_hash,
+                                    updated_at = :updated_at
                                 where id = :id
                                 """
                             ),
@@ -242,8 +300,12 @@ def ingest():
                         cxn.execute(
                             text(
                                 """
-                                insert into articles(source_id, guid, link, title, summary, content, published_at, topic, raw)
-                                values(:source_id, :guid, :link, :title, :summary, :content, :published_at, :topic, :raw)
+                                insert into articles(
+                                    source_id, guid, link, title, summary, content,
+                                    published_at, topic, raw, content_hash, updated_at
+                                )
+                                values(:source_id, :guid, :link, :title, :summary, :content,
+                                       :published_at, :topic, :raw, :content_hash, :updated_at)
                                 """
                             ),
                             params,
