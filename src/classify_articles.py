@@ -11,7 +11,7 @@ import requests
 from sqlalchemy import text
 from dotenv import load_dotenv
 
-from db import get_engine
+from db import get_engine, init_schema
 
 load_dotenv()
 
@@ -187,6 +187,8 @@ def fetch_articles(engine, since: str | None) -> list[dict]:
 def process_articles(since: str | None = None) -> None:
     taxonomy, taxonomy_version = load_taxonomy()
     cache = load_cache()
+    # Assure que le schéma minimal est en place (article_themes notamment)
+    init_schema()
     eng = get_engine()
     to_classify = fetch_articles(eng, since)
     if not to_classify:
