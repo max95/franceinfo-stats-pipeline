@@ -435,6 +435,47 @@ if __name__ == "__main__":
 
 ---
 
+## 4bis) src/classify_articles.py (classification par source)
+
+La classification ne s'appuie plus sur un fichier JSON statique. Elle dispatch
+désormais chaque article vers un classifieur dédié en fonction de la source
+(domaine du lien ou nom du flux RSS).
+
+- `src/classify_articles.py` orchestre l'extraction : il charge les articles
+  non encore labellisés, choisit le classifieur approprié puis persiste les
+  thèmes dans `article_themes`.
+- `src/source_classifiers.py` contient les implémentations concrètes. Chaque
+  classifieur hérite de `SourceClassifier`, expose un `model_version` et un
+  `taxonomy_version` (stockés en base) et implémente `supports()` +
+  `classify()`.
+
+Exemple pour France Info : on récupère la page HTML de l'article et on lit les
+balises `<meta property="article:tag">`.
+
+```python
+class FranceInfoClassifier(SourceClassifier):
+    model_version = "franceinfo_meta_tags_v1"
+    taxonomy_version = "franceinfo_meta_tags_v1"
+
+    def supports(self, article: Article) -> bool:
+        if article.link:
+            hostname = urlparse(article.link).hostname or ""
+            if "franceinfo.fr" in hostname:
+                return True
+        return article.source_name.startswith("franceinfo")
+
+    def classify(self, article: Article, fetch_html):
+        html = fetch_html(article.link)
+        soup = BeautifulSoup(html, "html.parser")
+        return [(meta.get("content"), 0.9) for meta in soup.find_all(...)]
+```
+
+Pour ajouter une nouvelle source, il suffit d'écrire un classifieur dédié et
+de l'ajouter dans le tuple `REGISTRY`. Chaque classifieur peut implémenter la
+logique HTML/API de son média sans impacter les autres.
+
+---
+
 ## 5) src/summarize.py (synthèses quotidiennes & par thème)
 
 ```python
