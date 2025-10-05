@@ -452,6 +452,10 @@ désormais chaque article vers un classifieur dédié en fonction de la source
 Exemple pour France Info : on récupère la page HTML de l'article et on lit les
 balises `<meta property="article:tag">`.
 
+Pour L'actualité (`lactualite_general`), le classifieur n'a pas besoin de
+scraper la page : il lit directement les catégories exposées dans le flux RSS
+(`raw`) et les enregistre comme thèmes.
+
 ```python
 class FranceInfoClassifier(SourceClassifier):
     model_version = "franceinfo_meta_tags_v1"

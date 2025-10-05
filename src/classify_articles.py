@@ -68,7 +68,8 @@ def fetch_articles(engine, since: str | None) -> list[dict]:
                 a.content,
                 a.content_hash,
                 a.link,
-                coalesce(s.name, '') as source_name
+                coalesce(s.name, '') as source_name,
+                a.raw
             from articles a
             left join sources s on s.id = a.source_id
         """
@@ -99,6 +100,7 @@ def process_articles(since: str | None = None) -> None:
                 summary=art.get("summary"),
                 content=art.get("content"),
                 content_hash=art.get("content_hash"),
+                raw=art.get("raw"),
             )
 
             if not article.content_hash:

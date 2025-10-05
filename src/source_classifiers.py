@@ -11,6 +11,7 @@ Adding support for a new source only requires implementing a new subclass of
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from html import unescape
 from typing import Callable, Iterable
 from urllib.parse import urlparse
@@ -33,6 +34,7 @@ class Article:
     summary: str | None
     content: str | None
     content_hash: str | None
+    raw: str | None
 
 
 class SourceClassifier:
@@ -108,8 +110,65 @@ class FranceInfoClassifier(SourceClassifier):
         return [(tag, 0.9) for tag in unique_tags]
 
 
+class LactualiteClassifier(SourceClassifier):
+    """Read classification categories directly from the RSS payload."""
+
+    model_version = "lactualite_rss_categories_v1"
+    taxonomy_version = "lactualite_rss_categories_v1"
+
+    def supports(self, article: Article) -> bool:  # type: ignore[override]
+        return article.source_name.startswith("lactualite")
+
+    def classify(  # type: ignore[override]
+        self, article: Article, fetch_html: Callable[[str], str | None]
+    ) -> list[tuple[str, float]]:
+        if not article.raw:
+            LOG.debug("Article %s sans payload brut pour L'actualité", article.id)
+            return []
+
+        try:
+            payload = json.loads(article.raw)
+        except json.JSONDecodeError:
+            LOG.warning("Article %s: JSON invalide dans raw", article.id)
+            return []
+
+        candidates: list[str] = []
+
+        tags = payload.get("tags")
+        if isinstance(tags, list):
+            for tag in tags:
+                if isinstance(tag, dict):
+                    label = tag.get("term") or tag.get("label")
+                    if isinstance(label, str) and label.strip():
+                        candidates.append(label.strip())
+                elif isinstance(tag, str) and tag.strip():
+                    candidates.append(tag.strip())
+
+        category = payload.get("category")
+        if isinstance(category, str) and category.strip():
+            candidates.append(category.strip())
+
+        categories = payload.get("categories")
+        if isinstance(categories, list):
+            for cat in categories:
+                if isinstance(cat, str) and cat.strip():
+                    candidates.append(cat.strip())
+
+        seen: set[str] = set()
+        unique: list[str] = []
+        for tag in candidates:
+            key = tag.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(tag)
+
+        return [(tag, 0.85) for tag in unique]
+
+
 REGISTRY: tuple[SourceClassifier, ...] = (
     FranceInfoClassifier(),
+    LactualiteClassifier(),
 )
 
 
