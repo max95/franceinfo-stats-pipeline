@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import pandas as pd
 from sqlalchemy import text
@@ -147,6 +147,101 @@ def compute_subject_lifespan(df: pd.DataFrame) -> tuple[pd.DataFrame, float | No
     return per_theme, overall_mean
 
 
+def compute_theme_time_series(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["day", "theme", "article_count"])
+
+    counts = (
+        df.groupby(["day", "theme"], dropna=False)
+        .size()
+        .reset_index(name="article_count")
+        .sort_values(["day", "theme"])
+    )
+    return counts
+
+
+def select_top_themes(time_series: pd.DataFrame, top_themes: int | None) -> pd.DataFrame:
+    if time_series.empty or top_themes is None or top_themes <= 0:
+        return time_series
+
+    totals = (
+        time_series.groupby("theme", dropna=False)["article_count"].sum()
+        .sort_values(ascending=False)
+    )
+    selected = totals.head(top_themes).index
+    return time_series[time_series["theme"].isin(selected)].reset_index(drop=True)
+
+
+def compute_theme_correlations(
+    time_series: pd.DataFrame, themes: Sequence[str] | None = None
+) -> pd.DataFrame:
+    if time_series.empty:
+        return pd.DataFrame()
+
+    pivot = (
+        time_series.pivot_table(
+            index="day",
+            columns="theme",
+            values="article_count",
+            aggfunc="sum",
+            fill_value=0,
+        )
+        .sort_index()
+    )
+
+    if themes:
+        missing = [theme for theme in themes if theme not in pivot.columns]
+        if missing:
+            LOG.warning("Thèmes introuvables pour la corrélation: %s", ", ".join(missing))
+        selected_cols = [theme for theme in themes if theme in pivot.columns]
+        if not selected_cols:
+            return pd.DataFrame()
+        pivot = pivot[selected_cols]
+
+    if pivot.shape[1] < 2:
+        LOG.warning("Impossible de calculer une corrélation avec moins de deux thèmes")
+        return pd.DataFrame()
+
+    corr = pivot.corr(method="pearson")
+    return corr.round(3)
+
+
+def detect_theme_peaks(
+    time_series: pd.DataFrame,
+    z_threshold: float = 2.5,
+    min_days: int = 5,
+) -> pd.DataFrame:
+    if time_series.empty:
+        return pd.DataFrame()
+
+    stats = (
+        time_series.groupby("theme")
+        .agg(mean_count=("article_count", "mean"), std_count=("article_count", "std"), days=("day", "nunique"))
+        .reset_index()
+    )
+
+    stats = stats[stats["days"] >= min_days]
+    if stats.empty:
+        LOG.warning(
+            "Aucun thème n'a suffisamment de jours (%s) pour la détection de pics",
+            min_days,
+        )
+        return pd.DataFrame()
+
+    merged = time_series.merge(stats, on="theme", how="inner")
+    merged = merged[merged["std_count"].fillna(0) > 0]
+    if merged.empty:
+        return pd.DataFrame()
+
+    merged["z_score"] = (merged["article_count"] - merged["mean_count"]) / merged["std_count"]
+    peaks = merged[merged["z_score"] >= z_threshold].copy()
+    peaks.sort_values(["z_score", "article_count"], ascending=False, inplace=True)
+    peaks["mean_count"] = peaks["mean_count"].round(2)
+    peaks["std_count"] = peaks["std_count"].round(2)
+    peaks["z_score"] = peaks["z_score"].round(2)
+    return peaks[["day", "theme", "article_count", "mean_count", "std_count", "z_score"]]
+
+
 def display_table(title: str, df: pd.DataFrame) -> None:
     print()
     print(title)
@@ -161,6 +256,32 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Statistiques descriptives sur les articles")
     parser.add_argument("--start-date", dest="start_date", help="Date de début (YYYY-MM-DD)")
     parser.add_argument("--end-date", dest="end_date", help="Date de fin (YYYY-MM-DD)")
+    parser.add_argument(
+        "--top-themes",
+        dest="top_themes",
+        type=int,
+        default=10,
+        help="Nombre de thèmes principaux à afficher pour les séries temporelles et corrélations",
+    )
+    parser.add_argument(
+        "--correlate",
+        nargs="+",
+        help="Liste de thèmes pour calculer une matrice de corrélation ciblée",
+    )
+    parser.add_argument(
+        "--z-threshold",
+        dest="z_threshold",
+        type=float,
+        default=2.5,
+        help="Seuil de détection des pics (z-score)",
+    )
+    parser.add_argument(
+        "--min-days",
+        dest="min_days",
+        type=int,
+        default=5,
+        help="Nombre minimal de jours d'observation par thème pour analyser les pics",
+    )
     args = parser.parse_args()
 
     df = fetch_articles(args.start_date, args.end_date)
@@ -171,10 +292,33 @@ def main() -> None:
     counts = compute_article_counts(df)
     weights = compute_theme_weights(df)
     lifespan_per_theme, overall = compute_subject_lifespan(df)
+    full_time_series = compute_theme_time_series(df)
+    theme_time_series = select_top_themes(full_time_series, args.top_themes)
+    correlation_source = full_time_series if args.correlate else theme_time_series
+    correlations = compute_theme_correlations(correlation_source, args.correlate)
+    peaks = detect_theme_peaks(
+        full_time_series,
+        z_threshold=args.z_threshold,
+        min_days=args.min_days,
+    )
 
     display_table("Nombre d'articles par jour / source / thème", counts)
     display_table("Poids relatifs des thèmes", weights)
     display_table("Durée moyenne de vie médiatique par thème", lifespan_per_theme)
+    display_table("Fréquence quotidienne par thème", theme_time_series)
+
+    if not correlations.empty:
+        print()
+        print("Corrélations entre thèmes")
+        print("-" * len("Corrélations entre thèmes"))
+        print(correlations.to_string())
+    elif args.correlate:
+        LOG.info("Impossible de calculer la corrélation pour les thèmes demandés")
+
+    display_table(
+        "Pics médiatiques détectés (z-score)",
+        peaks,
+    )
 
     if overall is not None:
         print(f"\nDurée moyenne de vie médiatique tous thèmes confondus : {overall} jours")
