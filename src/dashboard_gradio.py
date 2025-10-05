@@ -38,8 +38,14 @@ from articles a
 join sources s on s.id = a.source_id
 where date(coalesce(a.published_at, a.inserted_at)) between :start_day and :end_day
   and a.id not in (select article_id from article_dupes)
-group by day, source, topic
-order by day asc, source asc, topic asc
+group by
+  day,
+  source,
+  coalesce(a.topic,'general')
+order by
+  day asc,
+  source asc,
+  coalesce(a.topic,'general') asc
 """
 
 
