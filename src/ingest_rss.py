@@ -47,7 +47,7 @@ def ingest():
                     insert into articles(source_id, guid, link, title, summary, published_at, topic, raw)
                     select id, :guid, :link, :title, :summary, :published_at, :topic, :raw
                     from sources where name=:src
-                    on conflict (source_id, coalesce(guid, link)) do nothing
+                    on conflict do nothing
                     """
                 ), {
                     "guid": getattr(e, "id", None),
