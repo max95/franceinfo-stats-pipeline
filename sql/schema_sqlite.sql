@@ -15,13 +15,29 @@ create table if not exists articles (
   published_at text,
   topic text,
   raw text,
-  inserted_at text default (datetime('now'))
+  content_hash text,
+  inserted_at text default (datetime('now')),
+  updated_at text default (datetime('now'))
 );
 create unique index if not exists idx_articles_source_guid
   on articles(source_id, guid)
   where guid is not null;
 create unique index if not exists idx_articles_source_link
   on articles(source_id, link);
+create table if not exists article_themes (
+  id integer primary key autoincrement,
+  article_id int references articles(id) on delete cascade,
+  theme text not null,
+  confidence real not null,
+  model_version text not null,
+  taxonomy_version text not null,
+  content_hash text not null,
+  classified_at text default (datetime('now'))
+);
+create index if not exists idx_article_themes_article
+  on article_themes(article_id);
+create index if not exists idx_article_themes_hash
+  on article_themes(content_hash);
 create table if not exists article_dupes (
   id integer primary key autoincrement,
   article_id int,

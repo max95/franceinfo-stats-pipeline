@@ -18,7 +18,9 @@ create table if not exists articles (
   published_at timestamptz,
   topic text,
   raw jsonb,
-  inserted_at timestamptz default now()
+  content_hash text,
+  inserted_at timestamptz default now(),
+  updated_at timestamptz default now()
 );
 
 create unique index if not exists idx_articles_source_guid
@@ -26,6 +28,23 @@ create unique index if not exists idx_articles_source_guid
   where guid is not null;
 create unique index if not exists idx_articles_source_link
   on articles(source_id, link);
+
+create table if not exists article_themes (
+  id bigserial primary key,
+  article_id bigint references articles(id) on delete cascade,
+  theme text not null,
+  confidence real not null,
+  model_version text not null,
+  taxonomy_version text not null,
+  content_hash text not null,
+  classified_at timestamptz default now()
+);
+
+create index if not exists idx_article_themes_article
+  on article_themes(article_id);
+
+create index if not exists idx_article_themes_hash
+  on article_themes(content_hash);
 
 -- Déduplication logique multi-sources
 create table if not exists article_dupes (
