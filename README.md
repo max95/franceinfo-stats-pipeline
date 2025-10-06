@@ -195,6 +195,7 @@ create table if not exists daily_summaries (
   day date not null,
   summary_md text not null,
   created_at timestamptz default now(),
+  updated_at timestamptz default now(),
   unique(day)
 );
 
@@ -204,6 +205,7 @@ create table if not exists topic_summaries (
   topic text not null,
   summary_md text not null,
   created_at timestamptz default now(),
+  updated_at timestamptz default now(),
   unique(day, topic)
 );
 
@@ -260,7 +262,8 @@ create table if not exists daily_summaries (
   id integer primary key autoincrement,
   day text not null unique,
   summary_md text not null,
-  created_at text default (datetime('now'))
+  created_at text default (datetime('now')),
+  updated_at text default (datetime('now'))
 );
 create table if not exists topic_summaries (
   id integer primary key autoincrement,
@@ -268,6 +271,7 @@ create table if not exists topic_summaries (
   topic text not null,
   summary_md text not null,
   created_at text default (datetime('now')),
+  updated_at text default (datetime('now')),
   unique(day, topic)
 );
 create table if not exists transcripts (
@@ -534,9 +538,12 @@ logique HTML/API de son média sans impacter les autres.
 ## 5) src/summarize.py (synthèses quotidiennes & par thème)
 
 - Fenêtre de recalcul : `SUMMARY_WINDOW_DAYS` (par défaut `3`) permet de recalculer
-  les synthèses des *n* derniers jours. À chaque exécution, les synthèses sont
-  régénérées pour cette fenêtre glissante afin d'intégrer les articles arrivés
-  en retard.
+  les synthèses des *n* derniers jours.
+- Rafraîchissement incrémental : pour chaque jour de la fenêtre (et pour chaque
+  couple jour/thème), le script ne relance la génération que si un article plus
+  récent que le `updated_at` du résumé existe. Les jours sans nouveaux articles
+  sont donc ignorés, ce qui réduit les appels inutiles au LLM tout en absorbant
+  les publications tardives.
 - Coupe horaire : `SUMMARY_MIN_HOUR` (par défaut `9`) évite de lancer la
   synthèse du jour courant avant l'heure indiquée, limitant ainsi les mises à
   jour successives tout au long de la journée. Passer la valeur à `-1` pour

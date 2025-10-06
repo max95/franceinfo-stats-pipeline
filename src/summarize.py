@@ -1,6 +1,6 @@
 import os
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import text
 from db import get_engine
 from dotenv import load_dotenv
@@ -55,8 +55,34 @@ def call_llm(prompt: str) -> str:
     return r.json()["choices"][0]["message"]["content"].strip()
 
 
+def _parse_dt(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            if value.endswith("Z"):
+                try:
+                    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError:
+                    return None
+            return None
+    return None
+
+
+def _normalize_ts(value):
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
 SQL_ARTICLES_BY_DAY = """
-select title, summary, topic
+select title, summary, topic, published_at, inserted_at
 from articles
 where date(coalesce(published_at, inserted_at)) = :day
 and id not in (select article_id from article_dupes)
@@ -67,6 +93,7 @@ SQL_TOPICS_DAY = """
 select distinct coalesce(topic, 'general') as topic
 from articles
 where date(coalesce(published_at, inserted_at)) = :day
+  and id not in (select article_id from article_dupes)
 """
 
 
@@ -86,14 +113,38 @@ def build_daily(day: date):
         rows = cxn.execute(text(SQL_ARTICLES_BY_DAY), {"day": str(day)}).mappings().all()
         if not rows:
             return
+        latest_ts = None
+        for r in rows:
+            candidates = [
+                _parse_dt(r.get("published_at")),
+                _parse_dt(r.get("inserted_at")),
+            ]
+            article_ts = max((ts for ts in candidates if ts), default=None)
+            article_ts = _normalize_ts(article_ts)
+            if article_ts and (latest_ts is None or article_ts > latest_ts):
+                latest_ts = article_ts
+        current = cxn.execute(
+            text("select updated_at from daily_summaries where day = :d"),
+            {"d": str(day)},
+        ).mappings().one_or_none()
+        if current and latest_ts:
+            summary_ts = _normalize_ts(_parse_dt(current.get("updated_at")))
+            if summary_ts and latest_ts <= summary_ts:
+                return
         bundle = "\n".join([f"- {r['title']} — {r['summary'] or ''}" for r in rows])
         prompt = PROMPT_DAILY.format(date=str(day)) + "\n\nARTICLES:\n" + bundle
         out = call_llm(prompt)
-        cxn.execute(text("""
-            insert into daily_summaries(day, summary_md)
-            values (:d, :s)
-            on conflict(day) do update set summary_md=excluded.summary_md
-        """), {"d": str(day), "s": out})
+        stamp = _now()
+        cxn.execute(
+            text(
+                """
+            insert into daily_summaries(day, summary_md, updated_at)
+            values (:d, :s, :u)
+            on conflict(day) do update set summary_md=excluded.summary_md, updated_at=excluded.updated_at
+        """
+            ),
+            {"d": str(day), "s": out, "u": stamp},
+        )
 
 
 def build_topics(day: date):
@@ -102,7 +153,8 @@ def build_topics(day: date):
         topics = [r[0] for r in cxn.execute(text(SQL_TOPICS_DAY), {"day": str(day)}).all()]
         for t in topics:
             rows = cxn.execute(text("""
-                select title, summary from articles
+                select title, summary, published_at, inserted_at
+                from articles
                 where date(coalesce(published_at, inserted_at)) = :day
                   and coalesce(topic,'general') = :t
                   and id not in (select article_id from article_dupes)
@@ -110,14 +162,33 @@ def build_topics(day: date):
             """), {"day": str(day), "t": t}).mappings().all()
             if not rows:
                 continue
+            latest_ts = None
+            for r in rows:
+                candidates = [
+                    _parse_dt(r.get("published_at")),
+                    _parse_dt(r.get("inserted_at")),
+                ]
+                article_ts = max((ts for ts in candidates if ts), default=None)
+                article_ts = _normalize_ts(article_ts)
+                if article_ts and (latest_ts is None or article_ts > latest_ts):
+                    latest_ts = article_ts
+            current = cxn.execute(
+                text("select updated_at from topic_summaries where day = :d and topic = :t"),
+                {"d": str(day), "t": t},
+            ).mappings().one_or_none()
+            if current and latest_ts:
+                summary_ts = _normalize_ts(_parse_dt(current.get("updated_at")))
+                if summary_ts and latest_ts <= summary_ts:
+                    continue
             bundle = "\n".join([f"- {r['title']} — {r['summary'] or ''}" for r in rows])
             prompt = PROMPT_TOPIC.format(topic=t, date=str(day)) + "\n\nARTICLES:\n" + bundle
             out = call_llm(prompt)
+            stamp = _now()
             cxn.execute(text("""
-                insert into topic_summaries(day, topic, summary_md)
-                values (:d, :t, :s)
-                on conflict(day, topic) do update set summary_md=excluded.summary_md
-            """), {"d": str(day), "t": t, "s": out})
+                insert into topic_summaries(day, topic, summary_md, updated_at)
+                values (:d, :t, :s, :u)
+                on conflict(day, topic) do update set summary_md=excluded.summary_md, updated_at=excluded.updated_at
+            """), {"d": str(day), "t": t, "s": out, "u": stamp})
 
 
 if __name__ == "__main__":
