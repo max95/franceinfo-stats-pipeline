@@ -36,9 +36,17 @@ summarize: install
 align: install
 	. .venv/bin/activate && python src/align_transcripts.py
 
+# Configuration du dashboard
+DASH_START_DATE ?= 2024-01-01
+DASH_END_DATE ?= 2026-01-31
+DASH_PERIOD ?= W
+DASH_CLUSTERS ?= 10
+
 # Dashboard
 dash: install
-	. .venv/bin/activate && python src/dashboard_gradio.py
+	. .venv/bin/activate && python -m src.descriptive_stats --start-date $(DASH_START_DATE) --end-date $(DASH_END_DATE)
+	. .venv/bin/activate && python -m src.semantic_analysis --start-date $(DASH_START_DATE) --end-date $(DASH_END_DATE) --period $(DASH_PERIOD) --clusters $(DASH_CLUSTERS)
+	. .venv/bin/activate && DASH_START_DATE=$(DASH_START_DATE) DASH_END_DATE=$(DASH_END_DATE) DASH_PERIOD=$(DASH_PERIOD) DASH_CLUSTERS=$(DASH_CLUSTERS) python src/dashboard_gradio.py
 
 # Pipeline complet pour aujourd’hui
 all: ingest classify summarize align

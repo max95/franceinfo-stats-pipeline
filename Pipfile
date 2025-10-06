@@ -1,0 +1,24 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+python-dotenv = "*"
+sqlalchemy = ">=2.0"
+psycopg2-binary = "*"
+psycopg2 = "*"
+feedparser = "*"
+rapidfuzz = "*"
+pandas = "*"
+tqdm = "*"
+gradio = ">=4.0.0"
+requests = "*"
+beautifulsoup4 = "*"
+plotly = "*"
+scikit-learn = "*"
+
+[dev-packages]
+
+[requires]
+python_version = "3.10"
