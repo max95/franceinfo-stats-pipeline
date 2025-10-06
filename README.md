@@ -533,17 +533,37 @@ logique HTML/API de son média sans impacter les autres.
 
 ## 5) src/summarize.py (synthèses quotidiennes & par thème)
 
+- Fenêtre de recalcul : `SUMMARY_WINDOW_DAYS` (par défaut `3`) permet de recalculer
+  les synthèses des *n* derniers jours. À chaque exécution, les synthèses sont
+  régénérées pour cette fenêtre glissante afin d'intégrer les articles arrivés
+  en retard.
+- Coupe horaire : `SUMMARY_MIN_HOUR` (par défaut `9`) évite de lancer la
+  synthèse du jour courant avant l'heure indiquée, limitant ainsi les mises à
+  jour successives tout au long de la journée. Passer la valeur à `-1` pour
+  désactiver la coupe.
+- Fuseau : `SUMMARY_TIMEZONE` permet de préciser le fuseau utilisé pour
+  l'évaluation de l'heure courante (sinon, le fuseau local du serveur est
+  utilisé).
+
 ```python
 import os
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from sqlalchemy import text
 from db import get_engine
 from dotenv import load_dotenv
 
+try:
+    from zoneinfo import ZoneInfo  # py>=3.9
+except ImportError:  # pragma: no cover - fallback for very old python
+    ZoneInfo = None
+
 load_dotenv()
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 MAX_TOK = int(os.getenv("SUMMARIZE_MAX_TOKENS", "800"))
+WINDOW_DAYS = max(1, int(os.getenv("SUMMARY_WINDOW_DAYS", "3")))
+MIN_HOUR = int(os.getenv("SUMMARY_MIN_HOUR", "9"))
+TZ_NAME = os.getenv("SUMMARY_TIMEZONE")
 
 PROMPT_DAILY = open("config/prompts/daily_summary.txt", "r", encoding="utf-8").read()
 PROMPT_TOPIC = open("config/prompts/topic_summary.txt", "r", encoding="utf-8").read()
@@ -552,6 +572,22 @@ PROMPT_TOPIC = open("config/prompts/topic_summary.txt", "r", encoding="utf-8").r
 import requests
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_API_BASE = os.getenv("OPENAI_BASE", "https://api.openai.com/v1")
+
+
+def _now() -> datetime:
+    """Return timezone-aware now when possible."""
+    if TZ_NAME:
+        if ZoneInfo is not None:
+            try:
+                return datetime.now(ZoneInfo(TZ_NAME))
+            except Exception:
+                pass
+    if ZoneInfo is not None:
+        try:
+            return datetime.now().astimezone()
+        except Exception:
+            pass
+    return datetime.now()
 
 
 def call_llm(prompt: str) -> str:
@@ -580,6 +616,16 @@ select distinct coalesce(topic, 'general') as topic
 from articles
 where date(coalesce(published_at, inserted_at)) = :day
 """
+
+
+def iter_days(reference: date, now: datetime) -> list[date]:
+    start = reference - timedelta(days=WINDOW_DAYS - 1)
+    days = [start + timedelta(days=i) for i in range(WINDOW_DAYS)]
+    if MIN_HOUR >= 0:
+        cutoff = MIN_HOUR % 24
+        if reference in days and now.hour < cutoff:
+            days = [d for d in days if d != reference]
+    return days
 
 
 def build_daily(day: date):
@@ -623,9 +669,11 @@ def build_topics(day: date):
 
 
 if __name__ == "__main__":
-    today = date.today()
-    build_daily(today)
-    build_topics(today)
+    now = _now()
+    today = now.date()
+    for day in iter_days(today, now):
+        build_daily(day)
+        build_topics(day)
 ```
 
 ---
