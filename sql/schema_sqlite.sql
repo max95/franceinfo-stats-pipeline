@@ -49,7 +49,8 @@ create table if not exists daily_summaries (
   id integer primary key autoincrement,
   day text not null unique,
   summary_md text not null,
-  created_at text default (datetime('now'))
+  created_at text default (datetime('now')),
+  updated_at text default (datetime('now'))
 );
 create table if not exists topic_summaries (
   id integer primary key autoincrement,
@@ -57,6 +58,7 @@ create table if not exists topic_summaries (
   topic text not null,
   summary_md text not null,
   created_at text default (datetime('now')),
+  updated_at text default (datetime('now')),
   unique(day, topic)
 );
 create table if not exists transcripts (

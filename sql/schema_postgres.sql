@@ -61,6 +61,7 @@ create table if not exists daily_summaries (
   day date not null,
   summary_md text not null,
   created_at timestamptz default now(),
+  updated_at timestamptz default now(),
   unique(day)
 );
 
@@ -70,6 +71,7 @@ create table if not exists topic_summaries (
   topic text not null,
   summary_md text not null,
   created_at timestamptz default now(),
+  updated_at timestamptz default now(),
   unique(day, topic)
 );
 
